@@ -9,10 +9,13 @@ const conversationManager = require('../services/conversationManager');
 
 const router = express.Router();
 
-// Get all feedback
+// Get all feedback with 50-image limit enforcement
 router.get('/', async (req, res) => {
   try {
     const { limit = 50, offset = 0, orderBy = 'createdAt', order = 'desc' } = req.query;
+    
+    // First, enforce the 50-image limit
+    await enforceImageLimit();
     
     const options = {
       limit: parseInt(limit),
@@ -40,6 +43,113 @@ router.get('/', async (req, res) => {
     });
   }
 });
+
+// Get feedback with images only (max 50)
+router.get('/with-images', async (req, res) => {
+  try {
+    const { limit = 50, offset = 0, orderBy = 'createdAt', order = 'desc' } = req.query;
+    
+    // First, enforce the 50-image limit
+    await enforceImageLimit();
+    
+    const options = {
+      limit: Math.min(parseInt(limit), 50), // Ensure max 50
+      offset: parseInt(offset),
+      orderBy,
+      order
+    };
+    
+    const feedbacks = await prismaService.getFeedbackWithImages(options);
+    const totalImagesCount = await prismaService.countFeedbackWithImages();
+    
+    res.json({
+      success: true,
+      data: feedbacks,
+      count: feedbacks.length,
+      totalImagesCount,
+      pagination: {
+        limit: options.limit,
+        offset: options.offset
+      },
+      message: `Showing latest ${feedbacks.length} feedback records with images (max 50 total)`
+    });
+  } catch (error) {
+    console.error('Error getting feedback with images:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve feedback with images'
+    });
+  }
+});
+
+/**
+ * Enforce 50-image limit by cleaning up oldest images
+ * This function runs before returning feedback data
+ */
+async function enforceImageLimit() {
+  try {
+    console.log('🔍 Checking image limit (max 50 images)...');
+    
+    // Count current images
+    const imageCount = await prismaService.countFeedbackWithImages();
+    console.log(`📊 Current image count: ${imageCount}`);
+    
+    if (imageCount <= 50) {
+      console.log('✅ Image count within limit, no cleanup needed');
+      return;
+    }
+    
+    // Calculate how many images to remove (remove 2 extra to stay under limit)
+    const imagesToRemove = Math.max(1, imageCount - 50);
+    console.log(`🗑️ Need to remove ${imagesToRemove} oldest images`);
+    
+    // Get oldest feedback records with images
+    const oldestFeedbacks = await prismaService.getOldestFeedbackWithImages(imagesToRemove);
+    
+    if (oldestFeedbacks.length === 0) {
+      console.log('⚠️ No images found to remove');
+      return;
+    }
+    
+    console.log(`🎯 Found ${oldestFeedbacks.length} oldest images to remove:`, 
+      oldestFeedbacks.map(f => ({ id: f.id, createdAt: f.createdAt, imageUrl: f.profileImageUrl }))
+    );
+    
+    // Extract file paths for deletion from Supabase
+    const filePaths = oldestFeedbacks
+      .filter(feedback => feedback.imageStoragePath)
+      .map(feedback => feedback.imageStoragePath);
+    
+    console.log(`📁 File paths to delete from storage:`, filePaths);
+    
+    // Delete images from Supabase storage
+    if (filePaths.length > 0) {
+      const supabaseStorageService = require('../services/supabaseStorageService');
+      const deleteResult = await supabaseStorageService.deleteMultipleImages(filePaths);
+      
+      if (deleteResult.success) {
+        console.log(`✅ Successfully deleted ${deleteResult.deletedCount} images from storage`);
+      } else {
+        console.error(`❌ Failed to delete images from storage:`, deleteResult.error);
+        // Continue with database cleanup even if storage deletion fails
+      }
+    }
+    
+    // Remove image URLs from database records (set to null)
+    const feedbackIds = oldestFeedbacks.map(feedback => feedback.id);
+    const updatedCount = await prismaService.removeImageUrlsFromFeedback(feedbackIds);
+    
+    console.log(`✅ Image limit enforcement complete: removed ${updatedCount} image references from database`);
+    
+    // Log final count
+    const finalCount = await prismaService.countFeedbackWithImages();
+    console.log(`📊 Final image count after cleanup: ${finalCount}`);
+    
+  } catch (error) {
+    console.error('❌ Error enforcing image limit:', error);
+    // Don't throw error - let the main request continue even if cleanup fails
+  }
+}
 
 // Get all conversation sessions
 router.get('/sessions', async (req, res) => {
@@ -315,6 +425,38 @@ router.post('/cleanup-sessions', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to cleanup sessions'
+    });
+  }
+});
+
+// Manually enforce 50-image limit (admin endpoint)
+router.post('/cleanup-images', async (req, res) => {
+  try {
+    console.log('🔧 Manual image cleanup requested');
+    
+    const beforeCount = await prismaService.countFeedbackWithImages();
+    console.log(`📊 Images before cleanup: ${beforeCount}`);
+    
+    await enforceImageLimit();
+    
+    const afterCount = await prismaService.countFeedbackWithImages();
+    console.log(`📊 Images after cleanup: ${afterCount}`);
+    
+    const removedCount = beforeCount - afterCount;
+    
+    res.json({
+      success: true,
+      message: `Image cleanup completed`,
+      beforeCount,
+      afterCount,
+      removedCount,
+      maxLimit: 50
+    });
+  } catch (error) {
+    console.error('Error during manual image cleanup:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to cleanup images'
     });
   }
 });

@@ -133,6 +133,17 @@ class ConversationStateManager {
     
     await prismaService.saveFeedback(feedbackData);
     
+    // Trigger image limit cleanup if this feedback has an image
+    if (session.profileImageUrl) {
+      console.log('🖼️ New feedback with image saved, checking image limit...');
+      try {
+        await this.enforceImageLimit();
+      } catch (error) {
+        console.error('❌ Error during image limit enforcement:', error);
+        // Don't fail the main process if cleanup fails
+      }
+    }
+    
     // Log completion data to console (for backward compatibility)
     this.logCompletedFeedback(userPhone, { ...session, sessionDuration });
     
@@ -229,6 +240,75 @@ class ConversationStateManager {
       feedback: null,
       profileImageUrl: null
     });
+  }
+
+  /**
+   * Enforce 50-image limit by cleaning up oldest images
+   * This function runs after new feedback with images is saved
+   */
+  async enforceImageLimit() {
+    try {
+      console.log('🔍 Checking image limit (max 50 images)...');
+      
+      // Count current images
+      const imageCount = await prismaService.countFeedbackWithImages();
+      console.log(`📊 Current image count: ${imageCount}`);
+      
+      if (imageCount <= 50) {
+        console.log('✅ Image count within limit, no cleanup needed');
+        return;
+      }
+      
+      // Calculate how many images to remove (remove 2 extra to stay under limit)
+      const imagesToRemove = Math.max(2, imageCount - 50);
+      console.log(`🗑️ Need to remove ${imagesToRemove} oldest images`);
+      
+      // Get oldest feedback records with images
+      const oldestFeedbacks = await prismaService.getOldestFeedbackWithImages(imagesToRemove);
+      
+      if (oldestFeedbacks.length === 0) {
+        console.log('⚠️ No images found to remove');
+        return;
+      }
+      
+      console.log(`🎯 Found ${oldestFeedbacks.length} oldest images to remove:`, 
+        oldestFeedbacks.map(f => ({ id: f.id, createdAt: f.createdAt, imageUrl: f.profileImageUrl }))
+      );
+      
+      // Extract file paths for deletion from Supabase
+      const filePaths = oldestFeedbacks
+        .filter(feedback => feedback.imageStoragePath)
+        .map(feedback => feedback.imageStoragePath);
+      
+      console.log(`📁 File paths to delete from storage:`, filePaths);
+      
+      // Delete images from Supabase storage
+      if (filePaths.length > 0) {
+        const supabaseStorageService = require('./supabaseStorageService');
+        const deleteResult = await supabaseStorageService.deleteMultipleImages(filePaths);
+        
+        if (deleteResult.success) {
+          console.log(`✅ Successfully deleted ${deleteResult.deletedCount} images from storage`);
+        } else {
+          console.error(`❌ Failed to delete images from storage:`, deleteResult.error);
+          // Continue with database cleanup even if storage deletion fails
+        }
+      }
+      
+      // Remove image URLs from database records (set to null)
+      const feedbackIds = oldestFeedbacks.map(feedback => feedback.id);
+      const updatedCount = await prismaService.removeImageUrlsFromFeedback(feedbackIds);
+      
+      console.log(`✅ Image limit enforcement complete: removed ${updatedCount} image references from database`);
+      
+      // Log final count
+      const finalCount = await prismaService.countFeedbackWithImages();
+      console.log(`📊 Final image count after cleanup: ${finalCount}`);
+      
+    } catch (error) {
+      console.error('❌ Error enforcing image limit:', error);
+      throw error; // Re-throw for caller to handle
+    }
   }
 }
 

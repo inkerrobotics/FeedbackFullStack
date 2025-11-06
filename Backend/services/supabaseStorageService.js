@@ -267,6 +267,46 @@ class SupabaseStorageService {
   }
 
   /**
+   * Delete multiple images from Supabase Storage
+   * @param {array} filePaths - Array of file paths in storage
+   * @returns {object} Result with success count and errors
+   */
+  async deleteMultipleImages(filePaths) {
+    if (!this.supabase) {
+      console.warn('⚠️  Supabase not configured, skipping image deletion');
+      return { success: false, error: 'Supabase not configured' };
+    }
+
+    if (!filePaths || filePaths.length === 0) {
+      return { success: true, deletedCount: 0, errors: [] };
+    }
+
+    try {
+      console.log(`🗑️ Deleting ${filePaths.length} images from storage:`, filePaths);
+      
+      const { data, error } = await this.supabase.storage
+        .from(this.bucketName)
+        .remove(filePaths);
+      
+      if (error) {
+        console.error('❌ Error deleting multiple images:', error);
+        return { success: false, error: error.message, deletedCount: 0 };
+      }
+      
+      console.log(`✅ Successfully deleted ${filePaths.length} images from storage`);
+      return { 
+        success: true, 
+        deletedCount: filePaths.length, 
+        errors: [],
+        deletedPaths: filePaths
+      };
+    } catch (error) {
+      console.error('❌ Error deleting multiple images:', error);
+      return { success: false, error: error.message, deletedCount: 0 };
+    }
+  }
+
+  /**
    * Get image statistics
    * @returns {object} Storage statistics
    */

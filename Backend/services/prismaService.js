@@ -98,6 +98,112 @@ class PrismaService {
   }
 
   /**
+   * Get feedback records with images (profileImageUrl IS NOT NULL)
+   * @param {object} options - Query options (limit, offset, etc.)
+   * @returns {array} Array of feedback records with images
+   */
+  async getFeedbackWithImages(options = {}) {
+    try {
+      const { limit = 50, offset = 0, orderBy = 'createdAt', order = 'desc' } = options;
+      
+      const feedbacks = await this.prisma.feedback.findMany({
+        where: {
+          profileImageUrl: {
+            not: null
+          }
+        },
+        take: limit,
+        skip: offset,
+        orderBy: {
+          [orderBy]: order
+        }
+      });
+
+      console.log(`📊 Retrieved ${feedbacks.length} feedback records with images from database`);
+      return feedbacks;
+    } catch (error) {
+      console.error('❌ Error retrieving feedback with images from database:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Count feedback records with images (profileImageUrl IS NOT NULL)
+   * @returns {number} Count of records with images
+   */
+  async countFeedbackWithImages() {
+    try {
+      const count = await this.prisma.feedback.count({
+        where: {
+          profileImageUrl: {
+            not: null
+          }
+        }
+      });
+
+      console.log(`📊 Found ${count} feedback records with images`);
+      return count;
+    } catch (error) {
+      console.error('❌ Error counting feedback with images:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get oldest feedback records with images for cleanup
+   * @param {number} count - Number of oldest records to get
+   * @returns {array} Array of oldest feedback records with images
+   */
+  async getOldestFeedbackWithImages(count = 2) {
+    try {
+      const feedbacks = await this.prisma.feedback.findMany({
+        where: {
+          profileImageUrl: {
+            not: null
+          }
+        },
+        take: count,
+        orderBy: {
+          createdAt: 'asc' // Oldest first
+        }
+      });
+
+      console.log(`📊 Retrieved ${feedbacks.length} oldest feedback records with images for cleanup`);
+      return feedbacks;
+    } catch (error) {
+      console.error('❌ Error retrieving oldest feedback with images:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove image URL from feedback records (set to null)
+   * @param {array} feedbackIds - Array of feedback IDs to update
+   * @returns {number} Number of records updated
+   */
+  async removeImageUrlsFromFeedback(feedbackIds) {
+    try {
+      const result = await this.prisma.feedback.updateMany({
+        where: {
+          id: {
+            in: feedbackIds
+          }
+        },
+        data: {
+          profileImageUrl: null,
+          imageStoragePath: null
+        }
+      });
+
+      console.log(`🗑️ Removed image URLs from ${result.count} feedback records`);
+      return result.count;
+    } catch (error) {
+      console.error('❌ Error removing image URLs from feedback records:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Save conversation session to database
    * @param {object} sessionData - Session data to save
    * @returns {object} Saved session record
