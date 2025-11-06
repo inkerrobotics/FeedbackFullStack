@@ -1,7 +1,8 @@
-const { sendTextMessage } = require('./whatsappService');
+const { sendTextMessage, sendButtonMessage } = require('./whatsappService');
 const conversationManager = require('./conversationManager');
 const { getTemplate } = require('../utils/messageTemplates');
 const supabaseStorageService = require('./supabaseStorageService');
+const prismaService = require('./prismaService');
 
 /**
  * Process incoming webhook payload from WhatsApp Business API
@@ -61,10 +62,13 @@ async function handleIncomingMessage(message) {
         await handleNameCollection(message, userPhone, session);
         break;
       case 2:
-        await handleFeedbackCollection(message, userPhone, session);
+        await handleYesNoChoice(message, userPhone, session);
         break;
       case 3:
         await handleImageCollection(message, userPhone, session);
+        break;
+      case 4:
+        await handleFeedbackCollection(message, userPhone, session);
         break;
       default:
         // Invalid step, reset to beginning
@@ -106,13 +110,60 @@ async function handleNameCollection(message, userPhone, session) {
   await conversationManager.updateSession(userPhone, { name });
   await conversationManager.advanceStep(userPhone);
   
-  // Send personalized response
-  const response = getTemplate('nameReceived', name);
-  await sendTextMessage(userPhone, response);
+  // Ask if they want to share profile picture with buttons
+  const messageText = `Nice to meet you, ${name}! Are you ready to share your profile picture?`;
+  const buttons = [
+    { id: 'yes', title: 'Yes' },
+    { id: 'no', title: 'No' }
+  ];
+  await sendButtonMessage(userPhone, messageText, buttons);
 }
 
 /**
- * Handle feedback collection (Step 2 → Step 3)
+ * Handle Yes/No choice for profile picture (Step 2 → Step 3 or 4)
+ */
+async function handleYesNoChoice(message, userPhone, session) {
+  let choice = '';
+  
+  // Handle button response
+  if (message.type === 'interactive' && message.interactive?.button_reply) {
+    choice = message.interactive.button_reply.id.toLowerCase();
+    console.log(`🔘 User clicked button: "${choice}" from ${userPhone}`);
+  }
+  // Handle text response (fallback)
+  else if (message.type === 'text' && message.text) {
+    choice = message.text.body.toLowerCase().trim();
+    console.log(`💬 User typed choice: "${choice}" from ${userPhone}`);
+  } else {
+    // Wrong input type - expect button or text
+    const response = `Please click one of the buttons or reply with "Yes" or "No".`;
+    await sendTextMessage(userPhone, response);
+    return;
+  }
+  
+  if (choice === 'yes' || choice === 'y') {
+    // User wants to share profile picture
+    await conversationManager.advanceStep(userPhone); // Go to step 3 (image collection)
+    const response = getTemplate('profilePictureYes');
+    await sendTextMessage(userPhone, response);
+  } else if (choice === 'no' || choice === 'n') {
+    // User doesn't want to share profile picture, skip to feedback
+    await conversationManager.updateSession(userPhone, { step: 4 }); // Skip to step 4 (feedback)
+    const response = getTemplate('profilePictureNo', session.name);
+    await sendTextMessage(userPhone, response);
+  } else {
+    // Invalid choice, ask again with buttons
+    const messageText = `Please choose one of the options:`;
+    const buttons = [
+      { id: 'yes', title: 'Yes' },
+      { id: 'no', title: 'No' }
+    ];
+    await sendButtonMessage(userPhone, messageText, buttons);
+  }
+}
+
+/**
+ * Handle feedback collection (Step 4 → Complete)
  */
 async function handleFeedbackCollection(message, userPhone, session) {
   if (message.type !== 'text' || !message.text) {
@@ -125,17 +176,19 @@ async function handleFeedbackCollection(message, userPhone, session) {
   const feedback = message.text.body.trim();
   console.log(`💬 Collected feedback: "${feedback.substring(0, 50)}..." from ${userPhone}`);
   
-  // Update session with feedback and advance to step 3
+  // Update session with feedback
   await conversationManager.updateSession(userPhone, { feedback });
-  await conversationManager.advanceStep(userPhone);
   
-  // Ask for profile picture
-  const response = getTemplate('feedbackReceived');
+  // Complete the session
+  const completedSession = await conversationManager.completeSession(userPhone);
+  
+  // Send completion message
+  const response = getTemplate('completed', session.name);
   await sendTextMessage(userPhone, response);
 }
 
 /**
- * Handle image collection (Step 3 → Complete)
+ * Handle image collection (Step 3 → Step 4)
  */
 async function handleImageCollection(message, userPhone, session) {
   if (message.type !== 'image' || !message.image) {
@@ -148,14 +201,15 @@ async function handleImageCollection(message, userPhone, session) {
   const whatsappImageId = message.image.id; // WhatsApp image ID
   console.log(`📸 Collected image: ${whatsappImageId} from ${userPhone}`);
   
-  // Update session with WhatsApp image ID first
+  // Update session with WhatsApp image ID and advance to step 4
   await conversationManager.updateSession(userPhone, { 
     whatsappImageId: whatsappImageId,
     profileImageUrl: null // Will be updated after Supabase upload
   });
+  await conversationManager.advanceStep(userPhone);
   
-  // Send immediate response to user
-  const response = getTemplate('completed', session.name);
+  // Ask for feedback
+  const response = getTemplate('profilePictureReceived');
   await sendTextMessage(userPhone, response);
   
   // Process image upload in background (don't wait for completion)
@@ -164,70 +218,36 @@ async function handleImageCollection(message, userPhone, session) {
 
 /**
  * Process image upload to Supabase Storage asynchronously
- * This runs in the background after user receives completion message
+ * This runs in the background while user continues with feedback
  */
 async function processImageUploadAsync(whatsappImageId, userPhone, session) {
   try {
     console.log(`🔄 Starting background image processing for ${userPhone}`);
     
-    // Complete the session first (this creates the feedback record)
-    const completedSession = await conversationManager.completeSession(userPhone);
+    // Don't complete session here - it will be completed after feedback collection
+    // Just process the image upload
     
-    if (!completedSession) {
-      console.error(`❌ No session found to complete for ${userPhone}`);
-      return;
-    }
-    
-    // Get the feedback ID from the database (we need this for the filename)
-    const prismaService = require('./prismaService');
-    const recentFeedback = await prismaService.prisma.feedback.findFirst({
-      where: {
-        userPhone: userPhone
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    });
-    
-    if (!recentFeedback) {
-      console.error(`❌ No feedback record found for ${userPhone}`);
-      return;
-    }
-    
-    // Upload image to Supabase Storage
-    console.log(`📤 Uploading image to Supabase for feedback ID: ${recentFeedback.id}`);
+    // Upload image to Supabase Storage with temporary filename
+    console.log(`📤 Uploading image to Supabase for ${userPhone}`);
     const uploadResult = await supabaseStorageService.uploadWhatsAppImage(
       whatsappImageId, 
       userPhone, 
-      recentFeedback.id
+      `temp_${Date.now()}` // Temporary ID until feedback is completed
     );
     
     if (uploadResult.success) {
-      // Update feedback record with Supabase image URL
-      await prismaService.prisma.feedback.update({
-        where: {
-          id: recentFeedback.id
-        },
-        data: {
-          profileImageUrl: uploadResult.publicUrl,
-          whatsappImageId: whatsappImageId,
-          imageStoragePath: uploadResult.filePath
-        }
+      // Update session with Supabase image URL
+      await conversationManager.updateSession(userPhone, {
+        profileImageUrl: uploadResult.publicUrl
       });
       
       console.log(`✅ Image processing completed for ${userPhone}: ${uploadResult.publicUrl}`);
     } else {
       console.error(`❌ Image upload failed for ${userPhone}:`, uploadResult.error);
       
-      // Update feedback record with error info
-      await prismaService.prisma.feedback.update({
-        where: {
-          id: recentFeedback.id
-        },
-        data: {
-          whatsappImageId: whatsappImageId,
-          profileImageUrl: `error: ${uploadResult.error}`
-        }
+      // Update session with error info
+      await conversationManager.updateSession(userPhone, {
+        profileImageUrl: `error: ${uploadResult.error}`
       });
     }
     

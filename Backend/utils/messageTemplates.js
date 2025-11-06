@@ -7,9 +7,13 @@ const messageTemplates = {
   // Main conversation flow messages
   greeting: "👋 Hello! Thanks for contacting us. May I know your name?",
   
-  nameReceived: (name) => `Nice to meet you, ${name}! Please share your feedback or review.`,
+  nameReceived: (name) => `Nice to meet you, ${name}! Are you ready to share your profile picture? (Yes/No)`,
   
-  feedbackReceived: "Got it! Finally, please send your profile picture 📸.",
+  profilePictureYes: "Got it! Finally, please send your profile picture 📸.",
+  
+  profilePictureNo: (name) => `Thank You ${name}! Please share your feedback or review.`,
+  
+  profilePictureReceived: "Thanks! Now please share your feedback 💬.",
   
   completed: (name) => `✅ Thank you, ${name}! Your feedback has been received successfully.`,
   
