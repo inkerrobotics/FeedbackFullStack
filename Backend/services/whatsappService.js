@@ -60,6 +60,71 @@ class WhatsAppService {
 
 
   /**
+   * Send interactive button message
+   */
+  async sendButtonMessage(phoneNumber, text, buttons) {
+    if (!this.accessToken || !this.phoneNumberId) {
+      throw new Error('WhatsApp credentials not configured');
+    }
+
+    try {
+      const url = `${this.baseUrl}/${this.phoneNumberId}/messages`;
+      
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: {
+            text: text
+          },
+          action: {
+            buttons: buttons.map((button, index) => ({
+              type: 'reply',
+              reply: {
+                id: button.id || `btn_${index}`,
+                title: button.title
+              }
+            }))
+          }
+        }
+      };
+
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      return {
+        success: true,
+        messageId: response.data.messages?.[0]?.id,
+        phoneNumber,
+        text,
+        buttons,
+        timestamp: new Date().toISOString()
+      };
+
+    } catch (error) {
+      const errorData = error.response?.data?.error;
+      const errorMessage = errorData?.message || error.message;
+      const errorCode = errorData?.code;
+      
+      console.error('❌ Error sending button message:', error.response?.data || error.message);
+      
+      // Handle specific WhatsApp API errors
+      if (errorCode === 190) {
+        console.error('🔑 ACCESS TOKEN EXPIRED! Please update WHATSAPP_ACCESS_TOKEN in your .env file');
+        console.error('📝 Get a new token from: https://developers.facebook.com/apps/your-app-id/whatsapp-business/wa-dev-console/');
+      }
+      
+      throw new Error(`Failed to send button message: ${errorMessage} (Code: ${errorCode})`);
+    }
+  }
+
+  /**
    * Send simple text message
    */
   async sendTextMessage(phoneNumber, text) {
@@ -125,6 +190,13 @@ async function sendTextMessage(phoneNumber, text) {
 }
 
 /**
+ * Send button message (exported function)
+ */
+async function sendButtonMessage(phoneNumber, text, buttons) {
+  return await whatsappService.sendButtonMessage(phoneNumber, text, buttons);
+}
+
+/**
  * Test WhatsApp connection (exported function)
  */
 async function testWhatsAppConnection() {
@@ -134,6 +206,7 @@ async function testWhatsAppConnection() {
 module.exports = {
   WhatsAppService,
   sendTextMessage,
+  sendButtonMessage,
   testWhatsAppConnection,
   whatsappService
 };
