@@ -25,7 +25,7 @@ const messageTemplates = {
   // System messages
   sessionExpired: "Your session has expired. Let's start fresh! 👋 Hello! Thanks for contacting us. May I know your name?",
   
-  systemError: "Sorry, something went wrong. Please try again by sending 'hi'."
+  systemError: "Sorry, something went wrong. Please try again by sending 'share your thoughts'."
 };
 
 /**

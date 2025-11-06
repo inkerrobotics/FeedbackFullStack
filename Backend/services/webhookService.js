@@ -40,12 +40,12 @@ async function handleIncomingMessage(message) {
 
     const userPhone = message.from;
     
-    // Handle "hi" trigger to start feedback flow
+    // Handle "share your thoughts" trigger to start feedback flow
     if (message.type === 'text' && message.text) {
       const messageText = message.text.body.toLowerCase().trim();
       
-      if (messageText === 'hi') {
-        console.log(`👋 Starting feedback collection for ${userPhone}`);
+      if (messageText === 'share your thoughts') {
+        console.log(`💭 Starting feedback collection for ${userPhone}`);
         const session = await conversationManager.createSession(userPhone);
         const response = getTemplate('greeting');
         await sendTextMessage(userPhone, response);
