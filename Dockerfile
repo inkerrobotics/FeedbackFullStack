@@ -16,8 +16,7 @@ WORKDIR /app/frontend
 # Copy frontend package files first (for better caching)
 COPY frontend/package*.json ./
 
-# Set production environment for optimized build
-ENV NODE_ENV=production
+# Set build environment variables (NOT NODE_ENV=production yet, to install devDependencies)
 ENV GENERATE_SOURCEMAP=false
 ENV CI=false
 ENV DISABLE_ESLINT_PLUGIN=true
@@ -31,6 +30,7 @@ ENV VITE_API_BASE_URL="/api"
 # --no-audit: Skip security audit (faster)
 # --no-fund: Skip funding messages
 # --prefer-offline: Use cache when possible
+# NOTE: NOT using --only=production because we need devDependencies (TypeScript, Vite, etc.) for build
 RUN npm cache clean --force && \
     npm ci --legacy-peer-deps --no-audit --no-fund --prefer-offline
 
