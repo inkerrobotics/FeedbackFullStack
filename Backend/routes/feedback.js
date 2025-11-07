@@ -12,7 +12,7 @@ const router = express.Router();
 // Get all feedback with 50-image limit enforcement
 router.get('/', async (req, res) => {
   try {
-    const { limit = 50, offset = 0, orderBy = 'createdAt', order = 'desc' } = req.query;
+    const { limit = 10000, offset = 0, orderBy = 'createdAt', order = 'desc' } = req.query;
     
     // First, enforce the 50-image limit
     await enforceImageLimit();
