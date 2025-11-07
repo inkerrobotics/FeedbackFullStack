@@ -12,7 +12,19 @@ const { getCorsOrigins, logConfiguration } = require('./utils/urlConfig');
 const app = express();
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: ["'self'", 'https:', 'ws:', 'wss:'],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https:'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
+      fontSrc: ["'self'", 'data:', 'https:']
+    }
+  },
+  crossOriginEmbedderPolicy: false
+}));
 
 // CORS configuration with dynamic origins
 const corsOptions = {
